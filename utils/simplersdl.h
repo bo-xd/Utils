@@ -3,6 +3,7 @@
 
 #include <SDL3/SDL.h>
 #include <stdbool.h>
+#include <stdlib.h>
 
 extern SDL_Window *g_window;
 extern SDL_Renderer *g_renderer;
