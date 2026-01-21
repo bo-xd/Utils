@@ -2,56 +2,10 @@
 #define SIMPLYSDL_H
 
 #include <SDL3/SDL.h>
-#include <stdlib.h>
+#include <stdio.h>
+#include <stdbool.h>
+#include <stdarg.h>
 
-typedef struct WindowCTX {
-  SDL_Window *g_window;
-  SDL_Renderer *g_renderer;
-  SDL_Event event;
-} WindowCTX;
-
-static WindowCTX ctx;
-
-static int InitWindow(const char* title, int width, int height, SDL_WindowFlags flags) {
-  if (!SDL_Init(SDL_INIT_VIDEO)) {
-    fprintf(stderr, "SDL_Init error: %s\n", SDL_GetError());
-    return -1;
-  }
-  
-  if (!SDL_CreateWindowAndRenderer(title, width, height, flags, &ctx.g_window, &ctx.g_renderer)) {
-    fprintf(stderr, "Window/Renderer Creation Error: %s\n", SDL_GetError());
-    return -1;
-  }
-
-  return 0;
-}
-
-static void CleanupSDL(void) {
-  if (ctx.g_window) SDL_DestroyWindow(ctx.g_window);
-  if (ctx.g_renderer) SDL_DestroyRenderer(ctx.g_renderer);
-  SDL_Quit();
-}
-
-static bool CloseWindow(bool quit) {
-  if (quit) {
-    CleanupSDL();
-    return false;
-  }
-
-  while (SDL_PollEvent(&ctx.event)) {
-    if (ctx.event.type == SDL_EVENT_QUIT) {
-      CleanupSDL();
-      return false;
-    }
-  }
-
-  SDL_SetRenderDrawColor(ctx.g_renderer, 0, 0, 0, 255);
-  SDL_RenderClear(ctx.g_renderer);
-
-  return true;
-}
-
-// from https://github.com/dhepper/font8x8/blob/master/font8x8_basic.h
 char font8x8_basic[128][8] = {
     { 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00},   // U+0000 (nul)
     { 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00},   // U+0001
@@ -183,26 +137,93 @@ char font8x8_basic[128][8] = {
     { 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}    // U+007F
 };
 
-static void DrawText(const char *string, float x, float y, float scale) {
-    for (int i = 0; string[i] != '\0'; i++) {
-        unsigned char c = (unsigned char)string[i];
-        
-        if (c >= 128) continue;
+typedef struct WindowCTX {
+    SDL_Window *g_window;
+    SDL_Renderer *g_renderer;
+    SDL_Event event;
+    uint64_t last_time;
+    uint32_t targetms;
+    float dt;
+} WindowCTX;
 
+static WindowCTX ctx;
+
+static void CleanupSDL(void) {
+    if (ctx.g_renderer) SDL_DestroyRenderer(ctx.g_renderer);
+    if (ctx.g_window) SDL_DestroyWindow(ctx.g_window);
+    SDL_Quit();
+}
+
+static int InitWindow(const char* title, int width, int height, SDL_WindowFlags flags) {
+    if (!SDL_Init(SDL_INIT_VIDEO)) return -1;
+    if (!SDL_CreateWindowAndRenderer(title, width, height, flags, &ctx.g_window, &ctx.g_renderer)) return -1;
+
+    ctx.targetms = 0;
+    ctx.last_time = SDL_GetTicks();
+    ctx.dt = 0;
+    return 0;
+}
+
+static void SetFps(int fps) {
+    if (fps > 0) ctx.targetms = 1000 / fps;
+}
+
+static bool CloseWindow(bool quit) {
+    if (quit) { CleanupSDL(); return false; }
+
+    SDL_RenderPresent(ctx.g_renderer);
+
+    uint64_t now = SDL_GetTicks();
+    uint64_t elapsed = now - ctx.last_time;
+
+    if (ctx.targetms > 0 && elapsed < ctx.targetms) {
+        SDL_Delay(ctx.targetms - (uint32_t)elapsed);
+        now = SDL_GetTicks();
+        elapsed = now - ctx.last_time;
+    }
+
+    ctx.dt = (float)elapsed / 1000.0f;
+    ctx.last_time = now;
+
+    while (SDL_PollEvent(&ctx.event)) {
+        if (ctx.event.type == SDL_EVENT_QUIT) {
+            CleanupSDL();
+            return false;
+        }
+    }
+
+    SDL_SetRenderDrawColor(ctx.g_renderer, 0, 0, 0, 255);
+    SDL_RenderClear(ctx.g_renderer);
+    return true;
+}
+
+static void DrawTextBase(float x, float y, float scale, const char *format, ...) {
+    char buffer[1024];
+    va_list args;
+    va_start(args, format);
+    vsnprintf(buffer, sizeof(buffer), format, args);
+    va_end(args);
+
+    for (int i = 0; buffer[i] != '\0'; i++) {
+        unsigned char c = (unsigned char)buffer[i];
+        if (c >= 128) continue;
         for (int row = 0; row < 8; row++) {
             for (int col = 0; col < 8; col++) {
                 if (font8x8_basic[c][row] & (1 << col)) {
-                    SDL_FRect pixel = {
-                        x + (i * 8 * scale) + (col * scale), 
-                        y + (row * scale), 
-                        scale, 
-                        scale
-                    };
+                    SDL_FRect pixel = {x + (i * 8 * scale) + (col * scale), y + (row * scale), scale, scale};
                     SDL_RenderFillRect(ctx.g_renderer, &pixel);
                 }
             }
         }
     }
 }
+
+// Macro for Drawtext
+#define DrawText_Simple(fmt, ...) DrawTextBase(0.0f, 0.0f, 1.0f, fmt, ##__VA_ARGS__)
+#define DrawText_Full(x, y, s, fmt, ...) DrawTextBase(x, y, s, fmt, ##__VA_ARGS__)
+#define DrawText_GLUE(name, ...) DrawText_##name(__VA_ARGS__)
+#define DrawText_EVAL(name, ...) DrawText_GLUE(name, __VA_ARGS__)
+#define COUNT_ARGS(_1, _2, _3, _4, _5, NAME, ...) NAME
+#define DrawText(...) DrawText_EVAL(COUNT_ARGS(__VA_ARGS__, Full, Full, Full, Simple, Simple), __VA_ARGS__)
 
 #endif
